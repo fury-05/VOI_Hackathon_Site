@@ -4,21 +4,17 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-// Add these for the relationships:
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne; // Ensure this is imported
 use Illuminate\Database\Eloquent\Relations\MorphMany;
+use App\Models\Comment;
+
 
 class Project extends Model
 {
     use HasFactory;
 
-    /**
-     * The attributes that are mass assignable.
-     *
-     * @var array<int, string>
-     */
     protected $fillable = [
         'user_id',
         'team_id',
@@ -27,76 +23,108 @@ class Project extends Model
         'description',
         'github_repo_url',
         'live_url',
-        'status',
         'tags',
+        'status',
+        // Add other fillable fields for your Project model here
+    ];
+
+    protected $casts = [
+        'tags' => 'array',
+        // Add other casts for your Project model here
     ];
 
     /**
-     * The attributes that should be cast.
-     *
-     * @var array<string, string>
+     * Get the team that owns the project (if applicable).
      */
-    protected $casts = [
-        'tags' => 'array', // If you stored tags as JSON
-    ];
-
-    // Add Eloquent Relationships below this line
-
+    public function team(): BelongsTo // Add this method
+    {
+        // Make sure you have a Team model at App\Models\Team
+        // And that your 'projects' table has a 'team_id' foreign key column
+        return $this->belongsTo(Team::class);
+    }
     /**
      * Get the user that owns the project.
      */
     public function user(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'user_id');
+        return $this->belongsTo(User::class);
     }
 
     /**
-     * Get the team that owns the project (if any).
+     * Get the comments for the project.
      */
-    public function team(): BelongsTo
+    public function comments(): MorphMany  // This might be around line 58 in your file
     {
-        return $this->belongsTo(Team::class, 'team_id');
+        // Ensure this line passes BOTH arguments: Comment::class AND 'commentable'
+        return $this->morphMany(Comment::class, 'commentable');
     }
 
-    /**
-     * Get the hackathon this project is submitted to (if any).
-     */
-    public function hackathon(): BelongsTo
-    {
-        return $this->belongsTo(Hackathon::class, 'hackathon_id');
-    }
+    // Add other existing relationships like team, hackathonRegistration etc.
+    // Example:
+    // public function team(): BelongsTo
+    // {
+    //     return $this->belongsTo(Team::class);
+    // }
 
     /**
      * Get the GitHub data associated with the project.
      */
     public function githubData(): HasOne
     {
-        return $this->hasOne(GitHubData::class, 'project_id');
+        return $this->hasOne(GitHubData::class);
     }
 
     /**
-     * Get all of the project's comments.
+     * Parses a GitHub URL to extract owner and repository name.
+     *
+     * @param string $url The GitHub repository URL.
+     * @return array|null An array with 'owner' and 'repo' keys, or null if parsing fails.
      */
-    public function comments(): MorphMany
+    public static function parseGithubUrl(string $url): ?array
     {
-        return $this->morphMany(Comment::class, 'commentable');
-    }
+        $trimmedUrl = trim($url);
+        if (empty($trimmedUrl)) {
+            return null;
+        }
 
-    /**
-     * Get all of the scores for the project.
-     */
-    public function scores(): HasMany
-    {
-        return $this->hasMany(Score::class, 'project_id');
-    }
+        // Regex to capture owner and repo from various GitHub URL formats
+        // Handles:
+        // - https://github.com/owner/repo
+        // - http://github.com/owner/repo
+        // - github.com/owner/repo
+        // - https://github.com/owner/repo.git
+        // - https://github.com/owner/repo/
+        // - https://github.com/owner/repo/tree/branch
+        // - https://github.com/owner/repo/issues etc.
+        $pattern = '/^(?:https?:\/\/)?(?:www\.)?github\.com\/([a-zA-Z0-9._-]+)\/([a-zA-Z0-9._-]+)(?:\.git)?(?:\/.*)*$/i';
 
-    /**
-     * Get the winner record for this project (if it won a hackathon).
-     */
-    public function winnerEntry(): HasOne
-    {
-        // This assumes a project can only win once or you are interested in a specific win.
-        // You might also access winners through the Hackathon model.
-        return $this->hasOne(Winner::class, 'project_id');
+        if (preg_match($pattern, $trimmedUrl, $matches)) {
+            if (count($matches) >= 3) {
+                return ['owner' => $matches[1], 'repo' => $matches[2]];
+            }
+        }
+
+        // Fallback for simpler parsing if regex fails or for non-standard URLs (less robust)
+        $path = parse_url($trimmedUrl, PHP_URL_PATH);
+        if (empty($path)) {
+            // Try to handle cases like "github.com/owner/repo" without scheme
+            if (strpos($trimmedUrl, 'github.com/') === 0) {
+                $path = substr($trimmedUrl, strlen('github.com/'));
+            } else {
+                 return null;
+            }
+        }
+
+        $path = trim($path, '/');
+        if (strtolower(substr($path, -4)) === '.git') {
+            $path = substr($path, 0, -4);
+        }
+
+        $parts = explode('/', $path);
+        if (count($parts) >= 2) {
+            return ['owner' => $parts[0], 'repo' => $parts[1]];
+        }
+
+        return null;
     }
 }
